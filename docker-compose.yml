@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: icais2025-paperqa:latest
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
