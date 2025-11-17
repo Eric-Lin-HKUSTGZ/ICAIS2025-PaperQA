@@ -206,8 +206,8 @@ class PDFParser:
             # 3. 结构化解析
             structured_info = self.parse_pdf_structure(pdf_text, timeout, language=language)
             
-            # 添加原始文本（截断）
-            structured_info["raw_text"] = pdf_text[:10000]  # 保留前10000字符
+            # 添加原始文本（保留更多内容以确保包含Section、Table、Figure信息）
+            structured_info["raw_text"] = pdf_text  # 保留完整文本，不截断
             
             return structured_info
         except Exception as e:

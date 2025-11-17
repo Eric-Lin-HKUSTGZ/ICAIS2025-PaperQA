@@ -40,12 +40,35 @@ class PassageRetriever:
             
             # 尝试在句号、换行符等位置截断，避免截断句子
             if end < len(text):
-                # 向后查找句号、换行符等
-                for i in range(min(200, len(text) - end)):
-                    if text[end + i] in ['\n', '.', '。', '!', '!', '?', '?']:
-                        end = end + i + 1
-                        chunk = text[start:end]
+                # 向后查找句号、换行符等，但优先查找段落分隔符（双换行）
+                best_break = end
+                found_paragraph_break = False
+                
+                # 首先查找段落分隔符（双换行），这是最好的截断点
+                for i in range(min(500, len(text) - end)):
+                    if end + i + 1 < len(text) and text[end + i:end + i + 2] == '\n\n':
+                        best_break = end + i + 2
+                        found_paragraph_break = True
                         break
+                
+                # 如果没有找到段落分隔符，查找单换行符
+                if not found_paragraph_break:
+                    for i in range(min(300, len(text) - end)):
+                        if text[end + i] == '\n':
+                            best_break = end + i + 1
+                            break
+                
+                # 如果还是没有找到，查找句号、问号、感叹号
+                if best_break == end:
+                    for i in range(min(200, len(text) - end)):
+                        if text[end + i] in ['.', '。', '!', '!', '?', '?']:
+                            # 检查后面是否有空格或换行，确保是句子结束
+                            if end + i + 1 < len(text) and text[end + i + 1] in [' ', '\n', '\t']:
+                                best_break = end + i + 1
+                                break
+                
+                end = best_break
+                chunk = text[start:end]
             
             chunks.append(chunk.strip())
             

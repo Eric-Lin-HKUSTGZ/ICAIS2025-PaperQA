@@ -13,25 +13,25 @@ import argparse
 from pathlib import Path
 
 
-def read_base64_from_txt(txt_path: str) -> str:
+def pdf_to_base64(pdf_path: str) -> str:
     """
-    从txt文件中读取Base64编码的字符串。
+    读取PDF文件并转换为Base64编码的字符串。
 
     Args:
-        txt_path: txt文件的路径。
+        pdf_path: PDF文件的路径。
 
     Returns:
         Base64 编码的字符串。
     """
     try:
-        with open(txt_path, 'r', encoding='utf-8') as txt_file:
-            base64_content = txt_file.read().strip()
-        return base64_content
+        with open(pdf_path, "rb") as f:
+            pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
+        return pdf_base64
     except FileNotFoundError:
-        print(f"❌ 错误：找不到文件 {txt_path}")
+        print(f"❌ 错误：找不到文件 {pdf_path}")
         return ""
     except Exception as e:
-        print(f"❌ 错误：读取文件时出现问题 - {e}")
+        print(f"❌ 错误：读取PDF文件时出现问题 - {e}")
         return ""
 
 
@@ -72,7 +72,7 @@ def parse_sse_line(line: str) -> dict:
 
 def test_paper_qa_api(
     api_url: str,
-    txt_path: str,
+    pdf_path: str,
     query: str = "Please carefully analyze and explain the reinforcement learning training methods used in this article.",
     output_file: str = None,
     debug: bool = False
@@ -82,24 +82,32 @@ def test_paper_qa_api(
     
     Args:
         api_url: API端点URL
-        txt_path: 包含base64编码的txt文件路径
+        pdf_path: PDF文件路径
         query: 查询字符串
         output_file: 输出文件路径（可选，如果提供则保存完整响应）
         debug: 是否启用调试模式
     """
-    print(f"📄 测试文件: {txt_path}")
+    print(f"📄 测试文件: {pdf_path}")
     print(f"🔗 API端点: {api_url}")
     print(f"❓ 查询: {query}")
     print("-" * 80)
     
-    # 从txt文件读取base64内容
-    print("📖 正在读取base64编码文件...")
-    base64_content = read_base64_from_txt(txt_path)
+    # 读取PDF文件并转换为base64
+    print("📖 正在读取PDF文件并转换为Base64...")
+    base64_content = pdf_to_base64(pdf_path)
     if not base64_content:
-        print("❌ base64文件读取失败，退出测试")
+        print("❌ PDF文件读取失败，退出测试")
         return
     
-    print(f"✅ base64内容已读取，长度: {len(base64_content)} 字符")
+    # 计算原始PDF文件大小
+    try:
+        pdf_size = os.path.getsize(pdf_path)
+        pdf_size_mb = pdf_size / (1024 * 1024)
+        print(f"✅ PDF文件已读取，文件大小: {pdf_size_mb:.2f} MB")
+    except:
+        pass
+    
+    print(f"✅ Base64编码完成，长度: {len(base64_content)} 字符")
     print("-" * 80)
     
     # 构建请求
@@ -225,22 +233,22 @@ def main():
         epilog="""
 示例:
   # 使用默认查询测试
-  python test_api.py --txt test.pdf.txt
+  python test_api.py --pdf test.pdf
 
   # 指定查询
-  python test_api.py --txt test.pdf.txt --query "What are the main contributions of this paper?"
+  python test_api.py --pdf test.pdf --query "What are the main contributions of this paper?"
 
   # 使用中文查询
-  python test_api.py --txt test.pdf.txt --query "这篇论文的主要贡献是什么？"
+  python test_api.py --pdf test.pdf --query "这篇论文的主要贡献是什么？"
 
   # 指定API URL
-  python test_api.py --txt test.pdf.txt --url http://localhost:3000/paper_qa
+  python test_api.py --pdf test.pdf --url http://localhost:3000/paper_qa
 
   # 保存响应到文件
-  python test_api.py --txt test.pdf.txt --output answer_result.txt
+  python test_api.py --pdf test.pdf --output answer_result.txt
 
   # 启用调试模式
-  python test_api.py --txt test.pdf.txt --debug
+  python test_api.py --pdf test.pdf --debug
         """
     )
     
@@ -252,10 +260,10 @@ def main():
     )
     
     parser.add_argument(
-        "--txt",
+        "--pdf",
         type=str,
         required=True,
-        help="包含base64编码PDF的txt文件路径"
+        help="PDF文件路径"
     )
     
     parser.add_argument(
@@ -282,7 +290,7 @@ def main():
     # 运行测试
     test_paper_qa_api(
         api_url=args.url,
-        txt_path=args.txt,
+        pdf_path=args.pdf,
         query=args.query,
         output_file=args.output,
         debug=args.debug
