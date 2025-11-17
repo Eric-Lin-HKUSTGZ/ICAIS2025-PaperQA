@@ -120,7 +120,7 @@ def stream_message(message: str, chunk_size: int = 1):
         yield format_sse_data(chunk)
 
 
-async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, **kwargs):
+async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, timeout=None, **kwargs):
     """
     执行长时间任务，期间定期发送心跳数据
     
@@ -141,12 +141,17 @@ async def run_with_heartbeat(task_func, *args, heartbeat_interval=25, **kwargs):
     # 在任务执行期间定期发送心跳
     while not task.done():
         await asyncio.sleep(1)  # 每秒检查一次
-        elapsed = time.time() - last_heartbeat
+        now = time.time()
+        elapsed = now - last_heartbeat
         
         # 如果超过心跳间隔，发送心跳数据
         if elapsed >= heartbeat_interval:
             yield format_sse_data(" ")  # 发送一个空格作为心跳
-            last_heartbeat = time.time()
+            last_heartbeat = now
+        
+        if timeout is not None and (now - start_time) > timeout:
+            task.cancel()
+            raise asyncio.TimeoutError(f"任务执行超过 {timeout} 秒，已取消")
         
         # 检查任务是否完成
         if task.done():
@@ -248,12 +253,23 @@ async def _generate_answer_internal(query: str, pdf_content: str) -> AsyncGenera
         answer_generator = AnswerGenerator(llm_client, language=language)
         
         # 步骤1: PDF解析与结构化提取
+        structured_info = None
+        parse_timeout = Config.PDF_PARSE_TIMEOUT * 2
+        heartbeat_interval = 20
         try:
-            parse_timeout = Config.PDF_PARSE_TIMEOUT * 2
-            structured_info = await asyncio.wait_for(
-                asyncio.to_thread(pdf_parser.parse, pdf_content, parse_timeout, language),
+            async for item in run_with_heartbeat(
+                pdf_parser.parse,
+                pdf_content,
+                parse_timeout,
+                language,
+                heartbeat_interval=heartbeat_interval,
                 timeout=parse_timeout + 10
-            )
+            ):
+                if isinstance(item, tuple) and item[0] == "RESULT":
+                    structured_info = item[1]
+                    break
+                else:
+                    yield item
         except asyncio.TimeoutError:
             for chunk in stream_message(msg_templates['pdf_timeout']):
                 yield chunk
@@ -286,14 +302,36 @@ async def _generate_answer_internal(query: str, pdf_content: str) -> AsyncGenera
                 yield chunk
             return
         
+        if structured_info is None:
+            for chunk in stream_message(msg_templates['error_pdf_parse']("PDF parsing returned empty result")):
+                yield chunk
+            return
+        
         for chunk in stream_message(msg_templates['step1']):
             yield chunk
         
         # 步骤2: 问题理解与关键词提取
+        question_analysis = None
+        question_timeout = Config.QUESTION_ANALYSIS_TIMEOUT
         try:
-            question_analysis = await asyncio.to_thread(question_analyzer.analyze_question, query)
+            async for item in run_with_heartbeat(
+                question_analyzer.analyze_question,
+                query,
+                heartbeat_interval=15,
+                timeout=question_timeout + 5
+            ):
+                if isinstance(item, tuple) and item[0] == "RESULT":
+                    question_analysis = item[1]
+                    break
+                else:
+                    yield item
         except Exception as e:
             for chunk in stream_message(msg_templates['error_question_analysis'](e)):
+                yield chunk
+            return
+        
+        if question_analysis is None:
+            for chunk in stream_message(msg_templates['error_question_analysis']("Question analysis returned empty result")):
                 yield chunk
             return
         
@@ -301,10 +339,9 @@ async def _generate_answer_internal(query: str, pdf_content: str) -> AsyncGenera
             yield chunk
         
         # 步骤3: 相关段落检索（使用心跳机制）
+        passages_with_scores = []
         for chunk in stream_message(msg_templates['step3']):
             yield chunk
-        
-        passages_with_scores = []
         try:
             if passage_retriever:
                 # 获取PDF原始文本
@@ -329,7 +366,8 @@ async def _generate_answer_internal(query: str, pdf_content: str) -> AsyncGenera
                     passage_retriever,
                     query,
                     pdf_text,
-                    heartbeat_interval=25
+                    heartbeat_interval=25,
+                    timeout=Config.PASSAGE_RETRIEVAL_TIMEOUT + 10
                 ):
                     if isinstance(item, tuple) and item[0] == "RESULT":
                         passages_with_scores = item[1]
@@ -375,7 +413,8 @@ async def _generate_answer_internal(query: str, pdf_content: str) -> AsyncGenera
                 query,
                 structured_info,
                 passages,
-                heartbeat_interval=25
+                heartbeat_interval=25,
+                timeout=Config.ANSWER_GENERATION_TIMEOUT + 20
             ):
                 if isinstance(item, tuple) and item[0] == "RESULT":
                     answer = item[1]
